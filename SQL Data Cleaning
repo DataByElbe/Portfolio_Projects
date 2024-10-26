@@ -1,10 +1,3 @@
-```ruby
-# Ruby code here
-require 'redcarpet'
-markdown = Redcarpet.new("Hello World!")
-puts markdown.to_html
-```
-
 -- SQL Project Data Cleaning
 -- https://www.kaggle.com/datasets/swaptr/layoffs-2022
 
