@@ -1,10 +1,14 @@
 -- SQL Project Data Cleaning
--- https://www.kaggle.com/datasets/swaptr/layoffs-2022
+
+
+-- Source: https://www.kaggle.com/datasets/swaptr/layoffs-2022
+
 
 SELECT *
 FROM layoffs;
 
--- First create a staging table to work in and clean the data. We want a table with the raw data in case something happens
+
+-- First create a staging table to work in and clean the data. We want a table with the raw data in case anything happens
 
 CREATE TABLE layoffs_staging
 LIKE layoffs;
@@ -13,67 +17,90 @@ INSERT layoffs_staging
 SELECT * 
 FROM layoffs;
 
+
 -- Steps
 -- 1. Remove Duplicates
 -- 2. Standardize the Data
--- 3. Null Values or Blank Values
+-- 3. Null or Blank Values
 -- 4. Remove Necessary Columns/Rows
 
 
 -- 1. Remove Duplicates
 
-
 SELECT *
 FROM layoffs_staging;
 
 SELECT company, industry, total_laid_off, `date`, 
-ROW_NUMBER() OVER(
-PARTITION BY company, industry, total_laid_off, percentage_laid_off, `date`) AS row_num
+ROW_NUMBER() OVER(PARTITION BY company, industry, total_laid_off, percentage_laid_off, `date`) AS row_num
 FROM layoffs_staging;
 
 SELECT *
 FROM (SELECT company, industry, total_laid_off,`date`,
-		ROW_NUMBER() OVER (
-			PARTITION BY company, industry, total_laid_off,`date`
-			) AS row_num
-	FROM layoffs_staging
-) duplicates
-WHERE row_num > 1;
+ROW_NUMBER() OVER (PARTITION BY company, industry, total_laid_off,`date`) AS row_num
+FROM layoffs_staging
+
+SELECT *
+FROM duplicate_cte
+WHERE row_num >1;
+
 
 -- Look at oda to confirm
+
 SELECT *
 FROM layoffs_staging
 WHERE company = 'Oda';
 
+
 -- All appear to be legitimate entries and shouldn’t be deleted, look into every row to confirm actual duplicates
 
-WITH duplicate_cte AS
-(
-SELECT *, 
+SELECT *
+FROM (
+SELECT company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions,
 ROW_NUMBER() OVER(
-PARTITION BY company, location,
-industry, total_laid_off, percentage_laid_off, `date`, stage,
-country, funds_raised_millions) AS row_num
-FROM layoffs_staging
-)
+PARTITION BY company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions
+) AS row_num
+FROM layoffs_staging;
+
 SELECT *
 FROM duplicate_cte
 WHERE row_num >1;
 
 
-WITH duplicate_cte AS
-(
-SELECT *, 
+--Some of these contain duplicates. We should delete any containing row >1
+
+WITH DELETE_CTE AS (
+SELECT *
+FROM (SELECT company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions,
 ROW_NUMBER() OVER(
-PARTITION BY company, location,
-industry, total_laid_off, percentage_laid_off, `date`, stage,
-country, funds_raised_millions) AS row_num
+PARTITION BY company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions
+) AS row_num
+FROM layoffs_staging
+) duplicates
+WHERE row_num >1
+) 
+DELETE
+FROM DELETE_CTE;
+
+WITH DELETE_CTE AS (
+SELECT company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions,
+ROW_NUMBER() OVER (PARTITION BY company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions) 
+AS row_num
 FROM layoffs_staging
 )
-DELETE
-FROM duplicate_cte
-WHERE row_num >1;
+DELETE FROM layoffs_staging
+WHERE (company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions, row_num) IN
+SELECT (company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions, row_num
+FROM DELETE_CTE
+AND row_num >1;
 
+
+--Solution: create new column and add row numbers in, that way we can easily identify rows over 2 and discard
+
+ALTER TABLE layoffs_staging ADD row_num INT;
+
+SELECT * 
+FROM layoffs_staging
+WHERE row_num > 1;
 
 CREATE TABLE `layoffs_staging2` (
   `company` text,
@@ -86,58 +113,71 @@ CREATE TABLE `layoffs_staging2` (
   `country` text,
   `funds_raised_millions` int DEFAULT NULL,
   `row_num` INT
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+  );
 
-
-SELECT * 
-FROM layoffs_staging2
-WHERE row_num > 1;
-
-INSERT INTO layoffs_staging2
-SELECT *, 
-ROW_NUMBER() OVER(
-PARTITION BY company, location,
-industry, total_laid_off, percentage_laid_off, `date`, stage,
-country, funds_raised_millions) AS row_num
+INSERT INTO layoffs_staging2 (
+`company`, 
+`location`,
+`industry`,
+`total_laid_off`,
+`percentage_laid_off`,
+`date`,
+`stage`,
+`country`,
+`funds_raised_millions`,
+`row_num`)
+SELECT `company`, 
+`location`,
+`industry`,
+`total_laid_off`,
+`percentage_laid_off`,
+`date`,
+`stage`,
+`country`,
+`funds_raised_millions`,
+ROW_NUMBER() OVER (PARTITION BY company, location, industry, total_laid_off, percentage_laid_off, `date`, stage, country, funds_raised_millions) 
+AS row_num
 FROM layoffs_staging;
-DELETE
-FROM layoffs_staging2
+
+
+--Delete rows showing >1
+
+DELETE FROM layoffs_staging2
 WHERE row_num > 1;
 
 SELECT * 
 FROM layoffs_staging2;
 
 
--- Standardizing Data
+-- 2. Standardize the Data
 
 SELECT *
 FROM layoffs_staging2;
+
 
 -- Industry contains null and empty rows
 
 SELECT DISTINCT industry
-FROM layoffs_staging2;
-ORDER BY industry;
-
-SELECT DISTINCT industry
-FROM layoffs_staging2;
-WHERE industry IS NULL
-OR industry = ‘ ‘
+FROM layoffs_staging2
 ORDER BY industry;
 
 SELECT *
 FROM layoffs_staging2
-WHERE company LIKE 'Bally%';
+WHERE industry IS NULL
+OR industry = ' '
+ORDER BY industry;
 
 SELECT *
 FROM layoffs_staging2
 WHERE company = 'Airbnb';
+
 
 -- It looks like Airbnb is Travel but has yet to populate under industry
 
 UPDATE layoffs_staging2
 SET industry = 'Travel'
 WHERE company = 'Airbnb';
+
 
 -- Crypto also has multiple variations
 
@@ -149,23 +189,24 @@ UPDATE layoffs_staging2
 SET industry = 'Crypto'
 WHERE industry LIKE 'Crypto%';
 
-
 SELECT DISTINCT industry
 FROM layoffs_staging2
 ORDER BY industry;
 
--- Everything looks good except some US locations contain a period at the end
+
+-- Everything looks good, except few United States locations contain '.' at the end
 
 SELECT DISTINCT country
-FROM layoffs_staging2;
+FROM layoffs_staging2
 ORDER BY country;
 
 UPDATE layoffs_staging2
-SET country = TRIM(TRAILING '.' FROM country)
+SET country = TRIM(TRAILING '.' FROM country);
 
 SELECT DISTINCT country
-FROM layoffs_staging2;
+FROM layoffs_staging2
 ORDER BY country;
+
 
 -- Fix date columns
 
@@ -177,6 +218,7 @@ FROM layoffs_staging2;
 UPDATE layoffs_staging2
 SET `date` = STR_TO_DATE(`date`, '%m/%d/%Y');
 
+
 -- Convert data type
 
 ALTER TABLE layoffs_staging2
@@ -186,15 +228,16 @@ MODIFY COLUMN `date` DATE;
 SELECT *
 FROM layoffs_staging2;
 
--- 3. Look at Null Values
+
+-- 3. Null or Blank Values
 
 SELECT *
 FROM layoffs_staging2
 WHERE total_laid_off IS NULL
 AND percentage_laid_off IS NULL;
 
--- Null Values in total_laid_off, percentage_laid_off, and funds_raised_millions look normal
--- They also make calculations easier during EDA phase
+-- Null values in total_laid_off, percentage_laid_off, and funds_raised_millions look normal, no need to change
+-- Will make calculations easier during EDA phase
 
 
 -- 4. Remove Necessary Columns/Rows
@@ -208,7 +251,9 @@ FROM layoffs_staging2
 WHERE total_laid_off IS NULL
 AND percentage_laid_off IS NULL;
 
+
 -- Delete data we cannot use
+
 DELETE FROM layoffs_staging2
 WHERE total_laid_off IS NULL
 AND percentage_laid_off IS NULL;
@@ -218,6 +263,7 @@ FROM layoffs_staging2;
 
 ALTER TABLE layoffs_staging2
 DROP COLUMN row_num;
+
 
 SELECT *
 FROM layoffs_staging2;
