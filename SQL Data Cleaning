@@ -1,1 +1,224 @@
 
+-- SQL Project Data Cleaning
+-- https://www.kaggle.com/datasets/swaptr/layoffs-2022
+
+SELECT *
+FROM layoffs;
+
+-- First create a staging table to work in and clean the data. We want a table with the raw data in case something happens
+
+CREATE TABLE layoffs_staging
+LIKE layoffs;
+
+INSERT layoffs_staging
+SELECT * 
+FROM layoffs;
+
+-- Steps
+-- 1. Remove Duplicates
+-- 2. Standardize the Data
+-- 3. Null Values or Blank Values
+-- 4. Remove Necessary Columns/Rows
+
+
+-- 1. Remove Duplicates
+
+
+SELECT *
+FROM layoffs_staging;
+
+SELECT company, industry, total_laid_off, `date`, 
+ROW_NUMBER() OVER(
+PARTITION BY company, industry, total_laid_off, percentage_laid_off, `date`) AS row_num
+FROM layoffs_staging;
+
+SELECT *
+FROM (SELECT company, industry, total_laid_off,`date`,
+		ROW_NUMBER() OVER (
+			PARTITION BY company, industry, total_laid_off,`date`
+			) AS row_num
+	FROM layoffs_staging
+) duplicates
+WHERE row_num > 1;
+
+-- Look at oda to confirm
+SELECT *
+FROM layoffs_staging
+WHERE company = 'Oda';
+
+-- All appear to be legitimate entries and shouldn’t be deleted, look into every row to confirm actual duplicates
+
+WITH duplicate_cte AS
+(
+SELECT *, 
+ROW_NUMBER() OVER(
+PARTITION BY company, location,
+industry, total_laid_off, percentage_laid_off, `date`, stage,
+country, funds_raised_millions) AS row_num
+FROM layoffs_staging
+)
+SELECT *
+FROM duplicate_cte
+WHERE row_num >1;
+
+
+WITH duplicate_cte AS
+(
+SELECT *, 
+ROW_NUMBER() OVER(
+PARTITION BY company, location,
+industry, total_laid_off, percentage_laid_off, `date`, stage,
+country, funds_raised_millions) AS row_num
+FROM layoffs_staging
+)
+DELETE
+FROM duplicate_cte
+WHERE row_num >1;
+
+
+CREATE TABLE `layoffs_staging2` (
+  `company` text,
+  `location` text,
+  `industry` text,
+  `total_laid_off` int DEFAULT NULL,
+  `percentage_laid_off` text,
+  `date` text,
+  `stage` text,
+  `country` text,
+  `funds_raised_millions` int DEFAULT NULL,
+  `row_num` INT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+SELECT * 
+FROM layoffs_staging2
+WHERE row_num > 1;
+
+INSERT INTO layoffs_staging2
+SELECT *, 
+ROW_NUMBER() OVER(
+PARTITION BY company, location,
+industry, total_laid_off, percentage_laid_off, `date`, stage,
+country, funds_raised_millions) AS row_num
+FROM layoffs_staging;
+DELETE
+FROM layoffs_staging2
+WHERE row_num > 1;
+
+SELECT * 
+FROM layoffs_staging2;
+
+
+-- Standardizing Data
+
+SELECT *
+FROM layoffs_staging2;
+
+-- Industry contains null and empty rows
+
+SELECT DISTINCT industry
+FROM layoffs_staging2;
+ORDER BY industry;
+
+SELECT DISTINCT industry
+FROM layoffs_staging2;
+WHERE industry IS NULL
+OR industry = ‘ ‘
+ORDER BY industry;
+
+SELECT *
+FROM layoffs_staging2
+WHERE company LIKE 'Bally%';
+
+SELECT *
+FROM layoffs_staging2
+WHERE company = 'Airbnb';
+
+-- It looks like Airbnb is Travel but has yet to populate under industry
+
+UPDATE layoffs_staging2
+SET industry = 'Travel'
+WHERE company = 'Airbnb';
+
+-- Crypto also has multiple variations
+
+SELECT DISTINCT industry
+FROM layoffs_staging2
+ORDER BY industry;
+
+UPDATE layoffs_staging2
+SET industry = 'Crypto'
+WHERE industry LIKE 'Crypto%';
+
+
+SELECT DISTINCT industry
+FROM layoffs_staging2
+ORDER BY industry;
+
+-- Everything looks good except some US locations contain a period at the end
+
+SELECT DISTINCT country
+FROM layoffs_staging2;
+ORDER BY country;
+
+UPDATE layoffs_staging2
+SET country = TRIM(TRAILING '.' FROM country)
+
+SELECT DISTINCT country
+FROM layoffs_staging2;
+ORDER BY country;
+
+-- Fix date columns
+
+SELECT *
+FROM layoffs_staging2;
+
+-- Use str to date to update this field
+
+UPDATE layoffs_staging2
+SET `date` = STR_TO_DATE(`date`, '%m/%d/%Y');
+
+-- Convert data type
+
+ALTER TABLE layoffs_staging2
+MODIFY COLUMN `date` DATE;
+
+
+SELECT *
+FROM layoffs_staging2;
+
+-- 3. Look at Null Values
+
+SELECT *
+FROM layoffs_staging2
+WHERE total_laid_off IS NULL
+AND percentage_laid_off IS NULL;
+
+-- Null Values in total_laid_off, percentage_laid_off, and funds_raised_millions look normal
+-- They also make calculations easier during EDA phase
+
+
+-- 4. Remove Necessary Columns/Rows
+
+SELECT *
+FROM layoffs_staging2
+WHERE total_laid_off IS NULL;
+
+SELECT *
+FROM layoffs_staging2
+WHERE total_laid_off IS NULL
+AND percentage_laid_off IS NULL;
+
+-- Delete data we cannot use
+DELETE FROM layoffs_staging2
+WHERE total_laid_off IS NULL
+AND percentage_laid_off IS NULL;
+
+SELECT *
+FROM layoffs_staging2;
+
+ALTER TABLE layoffs_staging2
+DROP COLUMN row_num;
+
+SELECT *
+FROM layoffs_staging2;
